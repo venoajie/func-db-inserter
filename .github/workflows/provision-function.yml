@@ -66,17 +66,25 @@ jobs:
 
         if [ -z "$FUNCTION_OCID" ]; then
           echo "Function not found. Creating it..."
-          # --- FIX 2: Use the --annotations parameter for the 'create' command ---
-          oci fn function create \
+          
+          # STEP 6A: Create the function with only the basic, supported parameters.
+          NEW_FUNCTION_OCID=$(oci fn function create \
             --application-id "$APP_OCID" \
             --display-name "${{ env.FUNCTION_NAME }}" \
             --image "${{ env.FULL_IMAGE_NAME }}" \
             --memory-in-mbs "$MEMORY" \
             --timeout-in-seconds "$TIMEOUT" \
-            --annotations "{\"fn.oci.oracle.com/fn/invokeEndpoint\": \"${INVOKE_ENDPOINT}\"}"
+            --query "data.id" --raw-output)
+
+          # STEP 6B: Immediately update the newly created function to set the invoke endpoint.
+          echo "Setting invoke endpoint for new function..."
+          oci fn function update \
+            --function-id "$NEW_FUNCTION_OCID" \
+            --fn-invoke-endpoint "$INVOKE_ENDPOINT" \
+            --force
         else
           echo "Function found. Updating it..."
-          # The 'update' command correctly uses the --fn-invoke-endpoint parameter
+          # The 'update' command for an existing function remains the same.
           oci fn function update \
             --function-id "$FUNCTION_OCID" \
             --image "${{ env.FULL_IMAGE_NAME }}" \
@@ -85,4 +93,5 @@ jobs:
             --fn-invoke-endpoint "$INVOKE_ENDPOINT" \
             --force
         fi
+        
         echo "✅ Provisioning successful!"
