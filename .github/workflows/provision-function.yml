@@ -57,26 +57,26 @@ jobs:
         echo "Looking for existing function '${{ env.FUNCTION_NAME }}'..."
         FUNCTION_OCID=$(oci fn function list --application-id "$APP_OCID" --display-name "${{ env.FUNCTION_NAME }}" --query "data[0].id" --raw-output || true)
 
-        # --- THIS IS THE NEW LOGIC ---
         echo "Reading configuration from func.yaml..."
         MEMORY=$(yq '.memory' func.yaml)
         TIMEOUT=$(yq '.timeout' func.yaml)
-        # The key contains dots, so it must be quoted for yq
-        INVOKE_ENDPOINT=$(yq '.annotations."fn.oci.oracle.com/fn/invokeEndpoint"' func.yaml)
+        # --- FIX 1: Use yq -r to get the raw string value without quotes ---
+        INVOKE_ENDPOINT=$(yq -r '.annotations."fn.oci.oracle.com/fn/invokeEndpoint"' func.yaml)
         echo "Found settings: MEMORY=${MEMORY}, TIMEOUT=${TIMEOUT}, ENDPOINT=${INVOKE_ENDPOINT}"
-        # --- END OF NEW LOGIC ---
 
         if [ -z "$FUNCTION_OCID" ]; then
           echo "Function not found. Creating it..."
+          # --- FIX 2: Use the --annotations parameter for the 'create' command ---
           oci fn function create \
             --application-id "$APP_OCID" \
             --display-name "${{ env.FUNCTION_NAME }}" \
             --image "${{ env.FULL_IMAGE_NAME }}" \
             --memory-in-mbs "$MEMORY" \
             --timeout-in-seconds "$TIMEOUT" \
-            --fn-invoke-endpoint "$INVOKE_ENDPOINT"
+            --annotations "{\"fn.oci.oracle.com/fn/invokeEndpoint\": \"${INVOKE_ENDPOINT}\"}"
         else
           echo "Function found. Updating it..."
+          # The 'update' command correctly uses the --fn-invoke-endpoint parameter
           oci fn function update \
             --function-id "$FUNCTION_OCID" \
             --image "${{ env.FULL_IMAGE_NAME }}" \
