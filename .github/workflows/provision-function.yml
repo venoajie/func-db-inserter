@@ -1,0 +1,60 @@
+
+name: 'Provision Function Infrastructure (Manual)'
+
+on:
+  # This workflow is triggered manually from the GitHub Actions UI.
+  # Use this for the very first deployment or when changing func.yaml (e.g., memory, timeout).
+  workflow_dispatch:
+
+env:
+  APP_NAME: "hello-world-app"
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    steps:
+    - name: 1. Check out repository
+      uses: actions/checkout@v4
+
+    - name: 2. Install and Configure OCI CLI
+      run: |
+        pip install oci-cli
+        mkdir -p ~/.oci
+        echo "${{ secrets.OCI_PRIVATE_KEY }}" > ~/.oci/oci_api_key.pem
+        echo "[DEFAULT]" > ~/.oci/config
+        echo "user=${{ secrets.OCI_USER_OCID }}" >> ~/.oci/config
+        echo "fingerprint=${{ secrets.OCI_FINGERPRINT }}" >> ~/.oci/config
+        echo "tenancy=${{ secrets.OCI_TENANCY_OCID }}" >> ~/.oci/config
+        echo "region=${{ secrets.OCI_REGION }}" >> ~/.oci/config
+        echo "key_file=~/.oci/oci_api_key.pem" >> ~/.oci/config
+        chmod 600 ~/.oci/oci_api_key.pem ~/.oci/config
+
+    - name: 3. Install Fn Project CLI
+      run: |
+        echo "Installing Fn Project CLI..."
+        curl -LSs https://raw.githubusercontent.com/fnproject/cli/master/install | sh
+
+    - name: 4. Configure Fn Context
+      run: |
+        echo "Configuring Fn context for OCI..."
+        fn create context oci-context --provider oracle
+        fn use context oci-context
+        fn update context oracle.compartment-id ${{ secrets.OCI_COMPARTMENT_OCID }}
+        fn update context api-url https://functions.${{ secrets.OCI_REGION }}.oci.oraclecloud.com
+        fn update context registry ${{ secrets.OCI_REGION }}.ocir.io/${{ secrets.OCI_NAMESPACE }}/${{ env.APP_NAME }}
+
+    - name: 5. Log in to OCI Container Registry (OCIR)
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ secrets.OCI_REGION }}.ocir.io
+        username: ${{ secrets.OCIR_USERNAME }}
+        password: ${{ secrets.OCIR_AUTH_TOKEN }}
+
+    - name: 6. Deploy/Provision the Function using Fn CLI
+      run: |
+        echo "Deploying function with 'fn deploy'..."
+        # This powerful command handles build, push, and create/update of the
+        # entire function infrastructure based on func.yaml.
+        fn --verbose deploy --app ${{ env.APP_NAME }}
+
+        echo "✅ Provisioning successful!"
