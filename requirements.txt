@@ -1,0 +1,13 @@
+# FastAPI and Server
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+
+# OCI SDK for Vault access
+oci==2.126.0
+
+# PostgreSQL Driver and Connection Pool
+psycopg[binary]==3.1.19
+psycopg_pool[binary]==3.2.1
+
+# Pydantic for data validation
+pydantic==2.7.4
