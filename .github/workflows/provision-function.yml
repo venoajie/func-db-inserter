@@ -16,9 +16,9 @@ jobs:
     - name: 1. Check out repository
       uses: actions/checkout@v4
 
-    - name: 2. Install and Configure OCI CLI and yq
+    - name: 2. Install and Configure OCI CLI
       run: |
-        pip install oci-cli yq
+        pip install oci-cli
         mkdir -p ~/.oci
         echo "${{ secrets.OCI_PRIVATE_KEY }}" > ~/.oci/oci_api_key.pem
         echo "[DEFAULT]" > ~/.oci/config
@@ -28,7 +28,7 @@ jobs:
         echo "region=${{ secrets.OCI_REGION }}" >> ~/.oci/config
         echo "key_file=~/.oci/oci_api_key.pem" >> ~/.oci/config
         chmod 600 ~/.oci/oci_api_key.pem ~/.oci/config
-
+        
     - name: 3. Log in to OCI Container Registry (OCIR)
       uses: docker/login-action@v3
       with:
