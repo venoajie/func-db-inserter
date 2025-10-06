@@ -2,6 +2,7 @@
 name: 'Provision Function Infrastructure (Manual)'
 
 on:
+  # This workflow is triggered manually from the GitHub Actions UI.
   workflow_dispatch:
 
 env:
@@ -60,13 +61,11 @@ jobs:
         echo "Reading configuration from func.yaml..."
         MEMORY=$(yq '.memory' func.yaml)
         TIMEOUT=$(yq '.timeout' func.yaml)
-        # --- FIX 1: Use yq -r to get the raw string value without quotes ---
         INVOKE_ENDPOINT=$(yq -r '.annotations."fn.oci.oracle.com/fn/invokeEndpoint"' func.yaml)
         echo "Found settings: MEMORY=${MEMORY}, TIMEOUT=${TIMEOUT}, ENDPOINT=${INVOKE_ENDPOINT}"
 
         if [ -z "$FUNCTION_OCID" ]; then
           echo "Function not found. Creating it..."
-          
           # STEP 6A: Create the function with only the basic, supported parameters.
           NEW_FUNCTION_OCID=$(oci fn function create \
             --application-id "$APP_OCID" \
@@ -84,7 +83,7 @@ jobs:
             --force
         else
           echo "Function found. Updating it..."
-          # The 'update' command for an existing function remains the same.
+          # The 'update' command for an existing function handles all parameters.
           oci fn function update \
             --function-id "$FUNCTION_OCID" \
             --image "${{ env.FULL_IMAGE_NAME }}" \
@@ -93,5 +92,4 @@ jobs:
             --fn-invoke-endpoint "$INVOKE_ENDPOINT" \
             --force
         fi
-        
         echo "✅ Provisioning successful!"
