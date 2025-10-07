@@ -62,13 +62,12 @@ jobs:
         echo "Reading configuration from func.yaml..."
         MEMORY=$(yq '.memory' func.yaml)
         TIMEOUT=$(yq '.timeout' func.yaml)
-        # [FIX] Read the entire annotations block and format as a JSON string for the CLI.
-        ANNOTATIONS_JSON=$(yq '.annotations' -o=json -c func.yaml)
+        # [FIX] Use a more robust command to create a compact JSON string.
+        ANNOTATIONS_JSON=$(yq '.annotations' -o=json func.yaml | tr -d '\n')
         echo "Found settings: MEMORY=${MEMORY}, TIMEOUT=${TIMEOUT}, ANNOTATIONS=${ANNOTATIONS_JSON}"
 
         if [ -z "$FUNCTION_OCID" ]; then
           echo "Function not found. Creating it..."
-          # The 'create' command does not support free-form annotations. It must be a two-step process.
           NEW_FUNCTION_OCID=$(oci fn function create \
             --application-id "$APP_OCID" \
             --display-name "${{ env.FUNCTION_NAME }}" \
@@ -84,7 +83,6 @@ jobs:
             --force
         else
           echo "Function found. Updating it..."
-          # [FIX] The 'update' command now includes the --annotations parameter.
           oci fn function update \
             --function-id "$FUNCTION_OCID" \
             --image "${{ env.FULL_IMAGE_NAME }}" \
