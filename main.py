@@ -13,7 +13,8 @@ from typing import Annotated
 
 import oci
 import psycopg
-from fastapi import Depends, FastAPI, Header, HTTPException
+# [FIX] Import the raw Request object to capture the unprocessed body.
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel, Field, ValidationError
 
@@ -21,10 +22,6 @@ from pydantic import BaseModel, Field, ValidationError
 class Item(BaseModel):
     name: str = Field(..., example="Sample Item")
     description: str | None = Field(None, example="A description for the item.")
-
-# [FIX] Create a model to represent the request body from the OCI Functions platform.
-class OciFnRequestBody(BaseModel):
-    body: str
 
 # --- Constants for OCI Authentication ---
 REQUIRED_AUTH_VARS = [
@@ -169,15 +166,18 @@ async def health_check(
 
 @app.post("/call", tags=["Data Ingestion"])
 async def create_item(
-    request: OciFnRequestBody, # [FIX] Accept the OCI wrapper model.
+    request: Request, # [FIX] Accept the raw Request object.
     db_conn: Annotated[psycopg.AsyncConnection, Depends(get_db_connection)],
     log: Annotated[logging.LoggerAdapter, Depends(get_logger)]
 ):
     """Receives an item and inserts it into the database."""
     try:
-        # [FIX] Manually parse and validate the nested body.
-        item_data = json.loads(request.body)
-        item = Item.model_validate(item_data)
+        # [FIX] Get the raw JSON body and log it for diagnostics.
+        raw_body = await request.json()
+        log.info(f"RAW REQUEST BODY RECEIVED: {raw_body}")
+
+        # [FIX] Attempt to validate the raw body directly against the Item model.
+        item = Item.model_validate(raw_body)
         log.info(f"Received request to create item: {item.name}")
 
         async with db_conn.cursor() as cur:
