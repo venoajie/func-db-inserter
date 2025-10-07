@@ -61,7 +61,9 @@ async def lifespan(app: FastAPI):
     log = logging.LoggerAdapter(logger, {'invocation_id': 'startup'})
     log.info("--- LIFESPAN START: INITIALIZING DEPENDENCIES ---")
 
-    key_file_path = None
+    # [FIX] The original code is being refactored to move the slow DB connection
+    # test out of the time-sensitive startup/lifespan phase.
+
     try:
         # 1. OCI Client Initialization (from provided evidence)
         env_string = repr(os.environ)
@@ -106,16 +108,13 @@ async def lifespan(app: FastAPI):
             f"host={db_creds['host']} port={db_creds['port']} "
             f"dbname={db_creds['dbname']} user={db_creds['username']} "
             f"password={db_creds['password']}"
-        )
-        db_pool = AsyncConnectionPool(conninfo=conn_info, min_size=1, max_size=5)
+        )      
         
-        log.info("Testing database connection...")
-        async with db_pool.connection() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute("SELECT 1")
-        log.info("Database connection test successful.")
+        # The pool is created, but no connection is attempted here.
+        db_pool = AsyncConnectionPool(conninfo=conn_info, min_size=1, max_size=5)
+        log.info("Database connection pool configured. Connection will be established on first request.")
         log.info("--- LIFESPAN SUCCESS: ALL DEPENDENCIES INITIALIZED ---")
-
+        
     except Exception as e:
         log.critical(f"--- FATAL LIFESPAN CRASH: {e}", exc_info=True)
         raise
