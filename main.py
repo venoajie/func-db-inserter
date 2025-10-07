@@ -1,5 +1,4 @@
 
-```python
 import base64
 import json
 import logging
@@ -11,6 +10,7 @@ import textwrap
 import traceback
 import uuid
 from contextlib import asynccontextmanager
+# [FIX] Restore the missing import for Annotated
 from typing import Annotated
 
 import oci
@@ -66,6 +66,10 @@ async def lifespan(app: FastAPI):
     yield
     log.info("--- DIAGNOSTIC MODE: SHUTDOWN COMPLETE ---")
 
+# Helper function for logging
+def get_logger(fn_invoke_id: Annotated[str | None, Header(alias="fn-invoke-id")] = None) -> logging.LoggerAdapter:
+    invocation_id = fn_invoke_id or str(uuid.uuid4())
+    return logging.LoggerAdapter(logger, {'invocation_id': invocation_id})
 
 # --- FastAPI Application ---
 app = FastAPI(
@@ -103,8 +107,3 @@ async def create_item(log: logging.LoggerAdapter = Depends(get_logger)):
         message = f"FAILURE: An unexpected error occurred while connecting to {host}:{port}: {e}"
         log.error(message, exc_info=True)
         raise HTTPException(status_code=500, detail=message)
-
-# Helper function for logging, not used in diagnostic but kept for completeness
-def get_logger(fn_invoke_id: Annotated[str | None, Header(alias="fn-invoke-id")] = None) -> logging.LoggerAdapter:
-    invocation_id = fn_invoke_id or str(uuid.uuid4())
-    return logging.LoggerAdapter(logger, {'invocation_id': invocation_id})
