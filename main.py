@@ -1,3 +1,4 @@
+
 import base64
 import json
 import logging
@@ -14,12 +15,16 @@ import oci
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException
 from psycopg_pool import AsyncConnectionPool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 # --- Pydantic Model for incoming data ---
 class Item(BaseModel):
     name: str = Field(..., example="Sample Item")
     description: str | None = Field(None, example="A description for the item.")
+
+# [FIX] Create a model to represent the request body from the OCI Functions platform.
+class OciFnRequestBody(BaseModel):
+    body: str
 
 # --- Constants for OCI Authentication ---
 REQUIRED_AUTH_VARS = [
@@ -61,11 +66,9 @@ async def lifespan(app: FastAPI):
     log = logging.LoggerAdapter(logger, {'invocation_id': 'startup'})
     log.info("--- LIFESPAN START: INITIALIZING DEPENDENCIES ---")
 
-    # [FIX] The original code is being refactored to move the slow DB connection
-    # test out of the time-sensitive startup/lifespan phase.
-
+    key_file_path = None
     try:
-        # 1. OCI Client Initialization (from provided evidence)
+        # 1. OCI Client Initialization
         env_string = repr(os.environ)
         def _get_config_from_env_str(key: str, env_str: str) -> str | None:
             match = re.search(f"'{re.escape(key)}': '([^']*)'", env_str)
@@ -103,14 +106,12 @@ async def lifespan(app: FastAPI):
         db_creds = json.loads(decoded_secret)
         log.info("Database secret retrieved and decoded from Vault.")
 
-        # 3. Initialize and Test Database Connection Pool
+        # 3. Initialize Database Connection Pool
         conn_info = (
             f"host={db_creds['host']} port={db_creds['port']} "
             f"dbname={db_creds['dbname']} user={db_creds['username']} "
             f"password={db_creds['password']}"
         )      
-        
-        # The pool is created, but no connection is attempted here.
         db_pool = AsyncConnectionPool(conninfo=conn_info, min_size=1, max_size=5)
         log.info("Database connection pool configured. Connection will be established on first request.")
         log.info("--- LIFESPAN SUCCESS: ALL DEPENDENCIES INITIALIZED ---")
@@ -124,7 +125,6 @@ async def lifespan(app: FastAPI):
 
     yield
     
-    # --- Cleanup on Shutdown ---
     if db_pool:
         await db_pool.close()
         log.info("Database connection pool closed.")
@@ -155,7 +155,6 @@ async def health_check(
     db_conn: Annotated[psycopg.AsyncConnection, Depends(get_db_connection)],
     log: Annotated[logging.LoggerAdapter, Depends(get_logger)]
 ):
-    """Performs a health check by querying the database version."""
     log.info("Health check requested.")
     try:
         async with db_conn.cursor() as cur:
@@ -170,15 +169,17 @@ async def health_check(
 
 @app.post("/call", tags=["Data Ingestion"])
 async def create_item(
-    item: Item,
+    request: OciFnRequestBody, # [FIX] Accept the OCI wrapper model.
     db_conn: Annotated[psycopg.AsyncConnection, Depends(get_db_connection)],
     log: Annotated[logging.LoggerAdapter, Depends(get_logger)]
 ):
     """Receives an item and inserts it into the database."""
-    log.info(f"Received request to create item: {item.name}")
     try:
-        # For a PoC, we assume a simple 'items' table exists.
-        # CREATE TABLE items (id SERIAL PRIMARY KEY, name VARCHAR(255), description TEXT);
+        # [FIX] Manually parse and validate the nested body.
+        item_data = json.loads(request.body)
+        item = Item.model_validate(item_data)
+        log.info(f"Received request to create item: {item.name}")
+
         async with db_conn.cursor() as cur:
             await cur.execute(
                 "INSERT INTO items (name, description) VALUES (%s, %s) RETURNING id;",
@@ -193,6 +194,9 @@ async def create_item(
             "message": "Item created successfully.",
             "item_id": item_id[0]
         }
+    except (json.JSONDecodeError, ValidationError) as e:
+        log.error(f"Request body validation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=422, detail=f"Invalid item data in request body: {e}")
     except psycopg.Error as e:
         log.error(f"Database error during item insertion: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Database Error: {e}")
