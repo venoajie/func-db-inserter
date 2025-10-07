@@ -16,8 +16,9 @@ jobs:
     - name: 1. Check out repository
       uses: actions/checkout@v4
 
-    - name: 2. Install and Configure OCI CLI
+    - name: 2. Install yq and Configure OCI CLI
       run: |
+        sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq && sudo chmod +x /usr/bin/yq
         pip install oci-cli
         mkdir -p ~/.oci
         echo "${{ secrets.OCI_PRIVATE_KEY }}" > ~/.oci/oci_api_key.pem
@@ -61,12 +62,13 @@ jobs:
         echo "Reading configuration from func.yaml..."
         MEMORY=$(yq '.memory' func.yaml)
         TIMEOUT=$(yq '.timeout' func.yaml)
-        INVOKE_ENDPOINT=$(yq -r '.annotations."fn.oci.oracle.com/fn/invokeEndpoint"' func.yaml)
-        echo "Found settings: MEMORY=${MEMORY}, TIMEOUT=${TIMEOUT}, ENDPOINT=${INVOKE_ENDPOINT}"
+        # [FIX] Read the entire annotations block and format as a JSON string for the CLI.
+        ANNOTATIONS_JSON=$(yq '.annotations' -o=json -c func.yaml)
+        echo "Found settings: MEMORY=${MEMORY}, TIMEOUT=${TIMEOUT}, ANNOTATIONS=${ANNOTATIONS_JSON}"
 
         if [ -z "$FUNCTION_OCID" ]; then
           echo "Function not found. Creating it..."
-          # STEP 6A: Create the function with only the basic, supported parameters.
+          # The 'create' command does not support free-form annotations. It must be a two-step process.
           NEW_FUNCTION_OCID=$(oci fn function create \
             --application-id "$APP_OCID" \
             --display-name "${{ env.FUNCTION_NAME }}" \
@@ -75,21 +77,20 @@ jobs:
             --timeout-in-seconds "$TIMEOUT" \
             --query "data.id" --raw-output)
 
-          # STEP 6B: Immediately update the newly created function to set the invoke endpoint.
-          echo "Setting invoke endpoint for new function..."
+          echo "Setting annotations for new function..."
           oci fn function update \
             --function-id "$NEW_FUNCTION_OCID" \
-            --fn-invoke-endpoint "$INVOKE_ENDPOINT" \
+            --annotations "$ANNOTATIONS_JSON" \
             --force
         else
           echo "Function found. Updating it..."
-          # The 'update' command for an existing function handles all parameters.
+          # [FIX] The 'update' command now includes the --annotations parameter.
           oci fn function update \
             --function-id "$FUNCTION_OCID" \
             --image "${{ env.FULL_IMAGE_NAME }}" \
             --memory-in-mbs "$MEMORY" \
             --timeout-in-seconds "$TIMEOUT" \
-            --fn-invoke-endpoint "$INVOKE_ENDPOINT" \
+            --annotations "$ANNOTATIONS_JSON" \
             --force
         fi
         echo "✅ Provisioning successful!"
