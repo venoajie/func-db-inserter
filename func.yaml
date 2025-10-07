@@ -11,3 +11,8 @@ annotations:
   # creating items, so we point to the /items endpoint.
   # The /health endpoint remains accessible via its full path.
   fn.oci.oracle.com/fn/invokeEndpoint: "/items"
+
+  # This allows the function to use its assigned IAM permissions to pull its
+  # own image from the OCI Container Registry.
+  oracle.com/oci/auth/principal: "dynamic_group"
+
