@@ -1,0 +1,12 @@
+
+schema_version: 20180708
+name: vm-writer
+version: 1.0.0
+runtime: docker
+memory: 256
+timeout: 30
+annotations:
+  fn.oci.oracle.com/fn/invokeEndpoint: "/write-file"
+  # This annotation is critical for allowing the function to use its
+  # Dynamic Group to authenticate with OCI services like Vault.
+  oracle.com/oci/auth/principal: "dynamic_group"
