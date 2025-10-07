@@ -91,8 +91,8 @@ A two-phase deployment strategy is implemented via GitHub Actions.
 
 | Policy Name | Location | Statements |
 | :--- | :--- | :--- |
-| `CICD-Deployers-Policy` | **`Sandbox` Compartment** | `Allow group CI-CD-Deployers to manage functions-family in compartment Sandbox` |
-| `PostgresInserterFunction-Runtime-Policy` | Root Compartment | `Allow dynamic-group PostgresInserterFunctionDG to use virtual-network-family in compartment Sandbox`<br>`Allow dynamic-group ... to read secret-bundles in compartment Sandbox where ...`<br>`Allow dynamic-group ... to use keys in compartment Sandbox where ...` |
+| `CICD-Deployers-Policy` | `Sandbox` Compartment | `Allow group CI-CD-Deployers to manage functions-family in compartment Sandbox` |
+| `PostgresInserterFunction-Runtime-Policy` | Root Compartment | `Allow dynamic-group PostgresInserterFunctionDG to use virtual-network-family in compartment Sandbox`<br>`Allow dynamic-group ... to read secret-bundles in compartment Sandbox where ...`<br>`Allow dynamic-group ... to use keys in compartment Sandbox where ...`<br>**`Allow dynamic-group PostgresInserterFunctionDG to read repos in tenancy`** |
 | `Tenancy-Wide-Service-Policies` | Root Compartment | `Allow group CI-CD-Deployers to manage repos in tenancy`<br>`Allow service faas to use virtual-network-family in compartment Sandbox` |
 
 ## 5. Operational Runbook (Invocation)
