@@ -169,8 +169,7 @@ async def health_check(
         log.error(f"Health check failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Health check failed: {e}")
 
-
-@app.post("/items", tags=["Data Ingestion"])
+@app.post("/", tags=["Data Ingestion"])
 async def create_item(
     item: Item,
     db_conn: Annotated[psycopg.AsyncConnection, Depends(get_db_connection)],
