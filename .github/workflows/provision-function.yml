@@ -62,34 +62,27 @@ jobs:
         echo "Reading configuration from func.yaml..."
         MEMORY=$(yq '.memory' func.yaml)
         TIMEOUT=$(yq '.timeout' func.yaml)
-        # [FIX] Read ONLY the invoke endpoint, as it has a supported CLI flag.
-        INVOKE_ENDPOINT=$(yq -r '.annotations."fn.oci.oracle.com/fn/invokeEndpoint"' func.yaml)
-        echo "Found settings: MEMORY=${MEMORY}, TIMEOUT=${TIMEOUT}, ENDPOINT=${INVOKE_ENDPOINT}"
+        echo "Found settings: MEMORY=${MEMORY}, TIMEOUT=${TIMEOUT}"
 
         if [ -z "$FUNCTION_OCID" ]; then
           echo "Function not found. Creating it..."
-          NEW_FUNCTION_OCID=$(oci fn function create \
+          # NOTE: The invoke endpoint cannot be set here due to CLI limitations.
+          # This must be done manually in the OCI Console after creation.
+          oci fn function create \
             --application-id "$APP_OCID" \
             --display-name "${{ env.FUNCTION_NAME }}" \
             --image "${{ env.FULL_IMAGE_NAME }}" \
             --memory-in-mbs "$MEMORY" \
-            --timeout-in-seconds "$TIMEOUT" \
-            --query "data.id" --raw-output)
-
-          echo "Setting invoke endpoint for new function..."
-          oci fn function update \
-            --function-id "$NEW_FUNCTION_OCID" \
-            --fn-invoke-endpoint "$INVOKE_ENDPOINT" \
-            --force
+            --timeout-in-seconds "$TIMEOUT"
         else
           echo "Function found. Updating it..."
-          # [FIX] Remove the unsupported --annotations flag. Use the supported --fn-invoke-endpoint flag instead.
+          # [FIX] Removed the unsupported --fn-invoke-endpoint parameter.
           oci fn function update \
             --function-id "$FUNCTION_OCID" \
             --image "${{ env.FULL_IMAGE_NAME }}" \
             --memory-in-mbs "$MEMORY" \
             --timeout-in-seconds "$TIMEOUT" \
-            --fn-invoke-endpoint "$INVOKE_ENDPOINT" \
             --force
         fi
         echo "✅ Provisioning successful!"
+        echo "⚠️  MANUAL ACTION REQUIRED: Set the 'Invoke Endpoint' to '/items' in the OCI Console."
