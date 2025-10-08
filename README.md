@@ -3,91 +3,50 @@
 
 -   **Project**: OCI Serverless Function for PostgreSQL Ingestion
 -   **Version**: As of 2025-10-07
--   **Status**: **BLOCKED**. The function deploys successfully but fails on invocation.
--   **Last Known Error**:
-    ```json
-    {
-        "client_version": "Oracle-PythonSDK/2.160.2, Oracle-PythonCLI/3.66.2",
-        "code": "FunctionInvokeImageNotAvailable",
-        "message": "Failed to pull function image",
-        "operation_name": "invoke_function",
-        "status": 502,
-        "target_service": "functions_invoke",
-        "timestamp": "2025-10-07T00:44:03.384303+00:00"
-    }
-    ```
+-   **Status**: **OPERATIONAL**. The function successfully connects to the database and ingests data.
 
-## 1. Component Manifest
+## 1. Final Working Architecture
 
--   **`main.py`**: A Python 3.12 FastAPI application. It uses a `lifespan` context manager to initialize an `oci.secrets.SecretsClient` and a `psycopg_pool.AsyncConnectionPool`. It exposes `/health` (GET) and `/items` (POST) endpoints.
--   **`requirements.txt`**: Defines Python dependencies, including `fastapi`, `oci`, and `psycopg_pool`.
--   **`func.yaml`**: OCI Functions manifest. Defines `memory: 512`, `timeout: 60`, and sets the default invoke endpoint annotation to `fn.oci.oracle.com/fn/invokeEndpoint: "/items"`.
--   **`Dockerfile`**: A multi-stage Dockerfile based on `python:3.12.3-slim-bookworm`. The final stage's `CMD` is `[ "uvicorn", "main:app", "--uds", "/tmp/iofs/lsnr.sock" ]`.
+This section documents the final, correct configuration that enables a serverless function in a separate VCN to connect to a database in a central hub VCN.
 
-## 2. System Dependencies & Verification
+### 1.1. Network Topology (Hub and Spoke)
 
-### 2.1. Database Host Environment
-This section provides the necessary context to interact with the database host VM without referencing external documentation.
--   **Host OS & Architecture**: Oracle Linux 10 (`aarch64`).
--   **Service Management**: All services (PostgreSQL, PgBouncer) are containerized via Docker and Docker Compose. Interaction must be performed using `docker` commands, not `systemctl`.
--   **Interaction Pattern**: Administrative tasks on services are performed via `docker exec`.
-    -   **Example `psql` access**: `docker exec -it <container_name> psql -U <user> -d <database>`
-    -   **PostgreSQL Container Name**: The container name can be found via `docker ps` and is expected to be similar to `postgres-stack-postgres-1`.
--   **File System**: All persistent data and configuration are located under the `/srv` directory.
+The system uses a hub-and-spoke model to isolate services.
 
-### 2.2. Target Database Schema & Verification
-This is the target schema and the success indicator for the function's operation.
--   **Table Definition**: The function is designed to insert data into the `items` table.
-    ```sql
-    CREATE TABLE items (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        description TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-    ```
--   **Permissions Provisioning**: The `librarian_user` initially lacked creation privileges. The following commands were run as the `postgres` superuser to grant the necessary permissions:
-    ```sql
-    GRANT USAGE ON SCHEMA public TO librarian_user;
-    GRANT CREATE ON SCHEMA public TO librarian_user;
-    ```
--   **Success Verification**: A successful function invocation is verified by connecting to the database and executing the following query, which should return the inserted record:
-    ```sql
-    SELECT * FROM items;
-    ```
+-   **Hub VCN (`shared-infrastructure-vcn`, `10.0.0.0/16`):** Contains the central database VM.
+-   **Spoke VCN (`sandbox-vcn`, `10.1.0.0/16`):** Contains the serverless function.
+-   **Dynamic Routing Gateway (DRG):** Acts as the central router connecting the two VCNs.
 
-## 3. CI/CD Configuration
+### 1.2. End-to-End Network Path Checklist
 
-A two-phase deployment strategy is implemented via GitHub Actions.
--   **`provision-function.yml`**: Triggered manually (`workflow_dispatch`). It builds and pushes a Docker image, then uses the OCI CLI to perform a create-or-update operation on the function's infrastructure based on settings read from `func.yaml` using `yq`.
--   **`update-application.yml`**: Triggered automatically on push to `main`. It builds and pushes a Docker image, then uses the OCI CLI to update the function with the new image, leaving all other infrastructure settings untouched.
+For a connection to succeed, **all five** of the following network components must be correctly configured. A failure in any one of these will result in a connection timeout.
 
-## 4. Deployed Infrastructure Specification
+1.  **Function's Subnet Route Table (`fn-public-rt`):**
+    -   Must have a rule directing traffic for the database VCN (`10.0.0.0/16`) to the **DRG**.
 
-### 4.1. Function (`postgres-inserter`)
--   **OCID**: `ocid1.fnfunc.oc1.eu-frankfurt-1.am["redacted"]ra`
--   **Compartment**: `Sandbox`
--   **Image**: `fra.ocir.io/frpowqeyehes/hello-world-app/postgres-inserter:<git_sha>`
--   **Memory**: `512 MB`
--   **Timeout**: `60 seconds`
+2.  **Database's Subnet Route Table (`route table for private ...`):**
+    -   Must have a rule directing traffic for the function's VCN (`10.1.0.0/16`) to the **DRG**.
 
-### 4.2. Networking (`sandbox-vcn`)
--   **VCN OCID**: `ocid1.vcn.oc1.eu-frankfurt-1.am["redacted"]hq`
--   **VCN CIDR**: `10.1.0.0/16`
--   **Subnet OCID**: `ocid1.subnet.oc1.eu-frankfurt-1.aa["redacted"]la`
--   **Subnet CIDR**: `10.1.1.0/24` (Private)
--   **Service Gateway OCID**: `ocid1.servicegateway.oc1.eu-frankfurt-1.aa["redacted"]6a`
-    -   **Attached Service**: `all-fra-services-in-oracle-services-network`
--   **Route Table Rule** (`ocid1.routetable.oc1.eu-frankfurt-1.aa["redacted"]gq`):
-    -   **Destination**: `all-fra-services-in-oracle-services-network`
-    -   **Target Type**: `Service Gateway`
-    -   **Target**: `ocid1.servicegateway.oc1.eu-frankfurt-1.aa["redacted"]6a`
+3.  **DRG's Route Table (`hub-spoke-transit-rt`):**
+    -   Must have two rules to enable transit routing:
+        -   One rule directing traffic for `10.0.0.0/16` to the database VCN attachment.
+        -   One rule directing traffic for `10.1.0.0/16` to the function VCN attachment.
 
-### 4.3. IAM Configuration
--   **Dynamic Group (`PostgresInserterFunctionDG`)**:
-    -   **Location**: Root Compartment
-    -   **Rule**: `ALL {resource.type = 'fnfunc', resource.compartment.id = '<Sandbox_Compartment_OCID>'}`
--   **Policies**:
+4.  **Database's Subnet Security List (`Default Security List for shared-infrastructure-vcn`):**
+    -   Must have an **ingress rule** allowing traffic from the function's subnet (`Source CIDR: 10.1.0.0/24`) on the database port (`Destination Port: 6432/TCP`).
+
+5.  **Function's Subnet Security List (`fn-public-sl`):**
+    -   Must have an **ingress rule** allowing return traffic from the database VM (`Source CIDR: 10.0.0.146/32`) for all protocols.
+
+### 1.3. IAM Configuration (Least Privilege)
+
+The function uses a standard OCI user principal for authentication, secured by a dedicated group and narrowly scoped policies.
+
+-   **Dedicated Group:** `Function-User-Group` contains the user whose credentials are used by the function.
+-   **Required Policies (in Root Compartment):**
+    1.  `Allow group 'Function-User-Group' to read vaults in compartment Sandbox`
+    2.  `Allow group 'Function-User-Group' to read secret-bundles in compartment Sandbox`
+    3.  `Allow group 'Function-User-Group' to use keys in compartment Sandbox where target.key.id = '<VAULT_MASTER_KEY_OCID>'`
 
 | Policy Name | Location | Statements |
 | :--- | :--- | :--- |
@@ -95,29 +54,50 @@ A two-phase deployment strategy is implemented via GitHub Actions.
 | `PostgresInserterFunction-Runtime-Policy` | Root Compartment | `Allow dynamic-group PostgresInserterFunctionDG to use virtual-network-family in compartment Sandbox`<br>`Allow dynamic-group ... to read secret-bundles in compartment Sandbox where ...`<br>`Allow dynamic-group ... to use keys in compartment Sandbox where ...`<br>**`Allow dynamic-group PostgresInserterFunctionDG to read repos in tenancy`** |
 | `Tenancy-Wide-Service-Policies` | Root Compartment | `Allow group CI-CD-Deployers to manage repos in tenancy`<br>`Allow service faas to use virtual-network-family in compartment Sandbox` |
 
-## 5. Operational Runbook (Invocation)
 
--   **Limitation**: The `oci fn function invoke` CLI command does not support specifying an HTTP method or path. It can only invoke the default endpoint (`/items`) configured in `func.yaml`.
--   **Command**:
-    1.  Create payload: `echo '{"name": "Test", "description": "Test"}' > payload.json`
-    2.  Invoke: `oci fn function invoke --function-id ocid1.fnfunc.oc1.eu-frankfurt-1.am["redacted"]ra --body file://payload.json --file -`
 
-## 6. Architectural Record & Known Issues
+### 1.4. Vault & Secret Configuration
 
-### 6.1. [CRITICAL] IAM Anomaly: Container Repository Location
--   **Observation**: The CI/CD pipeline is only able to create and push container images to the **root compartment's** OCI Container Registry. Attempts to restrict the `CI-CD-Deployers` group to `manage repos in compartment Sandbox` resulted in `Invalid Image` errors during deployment.
--   **Workaround Implemented**: A policy `Allow group CI-CD-Deployers to manage repos in tenancy` was created at the root compartment level.
--   **Consequence**: The principle of least privilege is violated. The CI/CD user has overly broad permissions, and the container images are not co-located with their function in the `Sandbox` compartment.
+-   **Secret Content:** The secret stored in OCI Vault must be a plain text JSON object with the correct connection details.
+    ```json
+    {
+      "host": "10.0.0.146",
+      "port": 6432,
+      "dbname": "librarian_db",
+      "username": "librarian_user",
+      "password": "YOUR_DATABASE_PASSWORD"
+    }
+    ```
 
-### 6.2. [BLOCKER] Invocation Failure: `FunctionInvokeImageNotAvailable`
--   **Observation**: The function fails at invocation time with `Failed to pull function image`.
--   **State of System at Failure**:
-    1.  The container image exists in the root compartment's registry.
-    2.  The function runs in a private subnet with a correctly configured Service Gateway and route rule, providing a network path to OCI services.
-    3.  A policy `Allow service faas to use virtual-network-family in compartment Sandbox` exists at the root, granting the Functions platform network permissions.
-    4.  The function's dynamic group was **not** explicitly enabled via `oracle.com/oci/auth/principal: "dynamic_group"` annotation, as the OCI CLI did not support this parameter.
--   **Hypothesis**: The failure is due to an unresolved IAM or networking permission issue. The function's execution environment, despite the Service Gateway, cannot establish a connection to OCIR to pull its image. The lack of an explicit Resource Principal annotation is the most likely cause, but no tool was found to apply it successfully.
+## 2. Developer Runbook: Creating a New Database Function
 
-### 6.3. [DEBT] Manual Function Configuration
--   **State**: The function's environment variables (`DB_SECRET_OCID`, `OCI_*` credentials) are configured manually in the OCI Console.
--   **Risk**: This creates the possibility of configuration drift and makes redeploying the function in a new environment a manual, error-prone process.
+Follow this checklist to provision a new function that connects to the database.
+
+1.  **Code:** Use the final `main.py` from this repository as a template. It correctly handles the OCI request format.
+2.  **Network:** Ensure the new function is deployed into a **Function Application** that is configured to use the `fn-public-subnet`.
+3.  **CI/CD:**
+    -   Add a new workflow file or modify the existing `provision-function.yml` for the new function.
+    -   Run the workflow to build the image and create the function resource.
+4.  **Manual Configuration (OCI Console):**
+    -   Navigate to the newly created function.
+    -   Go to the **Configuration** section.
+    -   Add all required environment variables (`DB_SECRET_OCID`, `OCI_USER_OCID`, etc.).
+5.  **Invocation:** Invoke the function using the OCI CLI. The function will be accessible at the `/call` endpoint.
+
+## 3. Key Learnings & Troubleshooting Guide
+
+This project revealed several critical behaviors of the OCI platform.
+
+-   **CRITICAL: Network Ambiguity is Fatal.** The final blocker was an **overlapping subnet CIDR block** (`10.1.0.0/24`). This created an ambiguous network path that is impossible to debug without the **Network Path Analyzer**. An IP Address Management (IPAM) plan is essential to prevent this.
+-   **Function Application Networking is Immutable.** The subnet configuration for a Function Application **cannot be changed** after it is created. If it is configured for the wrong subnet, the entire application (and all functions within it) must be deleted and recreated.
+-   **OCI Functions Default Endpoint is `/call`.** When an invoke endpoint is not specified via annotations, the platform sends requests to the `/call` path, not the root (`/`).
+-   **OCI Functions Payload is Raw JSON.** The request body sent to the function is the raw JSON from your payload file, not a wrapper object.
+-   **Tooling Limitations.** The `oci fn` CLI toolchain has limitations. It does not support setting all function properties (like annotations or subnet on update). The OCI Console is the authoritative interface for these settings.
+-   **Vault Access Requires Three Policies.** To read a secret, a principal needs `read vaults`, `read secret-bundles`, and `use keys` permissions.
+
+## 4. Known Technical Debt
+
+-   **Manual Environment Configuration:** The function's environment variables are set manually in the OCI Console. This is brittle and not easily reproducible. This should be migrated to an Infrastructure as Code solution.
+-   **Lack of Infrastructure as Code (IaC):** The entire network infrastructure was created manually. This led to the overlapping subnet issue. The entire VCN, DRG, and Security List configuration should be managed with Terraform to ensure consistency and prevent errors.
+-   **IAM Anomaly: Container Repository Location:** The CI/CD pipeline is only able to create and push container images to the **root compartment's** OCI Container Registry. Attempts to restrict the `CI-CD-Deployers` group to `manage repos in compartment Sandbox` resulted in `Invalid Image` errors during deployment. For work around, a policy `Allow group CI-CD-Deployers to manage repos in tenancy` was created at the root compartment level. which violated The principle of least privilege. The CI/CD user has overly broad permissions, and the container images are not co-located with their function in the `Sandbox` compartment.
+
